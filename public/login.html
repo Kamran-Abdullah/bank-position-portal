@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="loginwrap">
+  <form class="logincard" id="f">
+    <div class="tag">Demo Group of Companies</div>
+    <h1>Bank Position Portal</h1>
+    <p class="muted" style="margin-top:-4px">Sign in to continue</p>
+    <label class="fld"><span>Username</span><input name="username" autocomplete="username" autofocus required></label>
+    <label class="fld"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+    <div id="msg"></div>
+    <button class="primary" style="width:100%;margin-top:6px" type="submit">Sign in</button>
+  </form>
+</div>
+<script src="/common.js"></script>
+<script>
+const f = document.getElementById('f'), msg = document.getElementById('msg');
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msg.innerHTML = '';
+  const body = JSON.stringify({ username: f.username.value.trim(), password: f.password.value });
+  try {
+    await BPP.api('/api/login', { method: 'POST', body });
+    location.href = '/dashboard.html';
+  } catch (err) {
+    msg.innerHTML = `<div class="msg err">${BPP.escapeHtml(err.message)}</div>`;
+  }
+});
+</script>
+</body>
+</html>

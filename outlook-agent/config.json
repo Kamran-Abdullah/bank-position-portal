@@ -1,0 +1,32 @@
+{
+  "mailbox": "finance@example.com",
+  "folder": "Inbox",
+  "lookbackDays": 7,
+  "extensions": [
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".csv",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png"
+  ],
+  "subjectKeywords": [
+    "statement",
+    "soa",
+    "account summary",
+    "nexcash"
+  ],
+  "attachmentKeywords": [
+    "statement",
+    "soa",
+    "accountsummary",
+    "nexcash"
+  ],
+  "minImageKB": 25,
+  "inboxDrop": "..\\Inbox Drop",
+  "dispatchSubjectKeywords": [
+    "payment dispatched"
+  ]
+}

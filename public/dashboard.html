@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+/* the summary cards always sit on one row (scrolls sideways on a very narrow screen) */
+#missingBanner:empty{display:none}
+.miss{border-radius:12px;padding:14px 18px;margin-bottom:14px;border:2px solid #c0392b;background:#fdecea;color:#7a1f16}
+.miss.ok{border-color:#2e7d4f;background:#e8f5ec;color:#1d5a37}
+.miss h3{margin:0 0 8px;font-size:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.miss .chips{display:flex;gap:8px;flex-wrap:wrap}
+.miss .chip{background:#fff;border:1px solid #e3b4ae;border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600;color:#7a1f16}
+.miss .chip button{margin-left:6px;padding:2px 9px}
+.miss .closedline{margin-top:10px;font-size:13px}
+.miss.ok .closedline{color:#1d5a37}
+.miss .closedline a{font-weight:600}
+.miss .chip small{font-weight:500;color:#9a5a53}
+#kpis{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(118px,1fr);overflow-x:auto;padding-bottom:4px}
+#kpis .kpi{padding:12px 12px}
+#kpis .kpi .n{font-size:21px}
+#kpis .kpi .l{font-size:11px;letter-spacing:.04em}
+#kpis a{display:block;min-width:0}
+</style>
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead">
+    <div>
+      <h1>Daily Bank Position</h1>
+      <div class="sub" id="sub">Loading…</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <label class="fld" style="margin:0">
+        <span>Bank Position Date</span>
+        <input type="date" id="workDate" style="width:170px">
+      </label>
+      <button id="reloadBtn" class="sm" title="Refresh">↻</button>
+    </div>
+  </div>
+
+  <div id="missingBanner"></div>
+  <div class="kpis" id="kpis"></div>
+  <div id="companies"></div>
+</div></main>
+
+<!-- Upload dialog -->
+<dialog id="upDlg">
+  <div class="dlg-head">
+    <h3 id="upTitle">Upload Bank Statement</h3>
+    <div class="sub" id="upSub"></div>
+  </div>
+  <div class="dlg-body" id="upBody"></div>
+  <div class="dlg-foot" id="upFoot"></div>
+</dialog>
+
+<script src="/common.js"></script>
+<script>
+const { api, money, moneyShort, fmtDate, todayISO, escapeHtml, STATUS_LABEL } = BPP;
+let DATA = null, CTX = null, FUNDS = null;
+
+(async function init() {
+  const me = await BPP.mountChrome('dashboard');
+  CTX = { canUpload: me.user.role === 'super_user' || (me.permissions && me.permissions.upload), isSU: me.user.role === 'super_user', canAdjust: !!(me.permissions && me.permissions.adjust_edit) };
+  const wd = document.getElementById('workDate');
+  wd.value = todayISO();
+  wd.addEventListener('change', load);
+  document.getElementById('reloadBtn').addEventListener('click', load);
+  await load();
+  loadAgent(); setInterval(loadAgent, 30000);
+})();
+
+async function loadAgent() {
+  try {
+    const a = await api('/api/ingest/status');
+    const hb = a.agent && a.agent.time ? new Date(a.agent.time) : null;
+    const ago = hb ? Math.round((Date.now() - hb.getTime()) / 60000) : null;
+    const txt = hb ? `last checked Outlook ${ago < 1 ? 'just now' : ago < 90 ? ago + ' min ago' : fmtDate(a.agent.time.slice(0, 10))}` : 'Outlook agent not running yet';
+    const el = document.getElementById('agentLine') || (() => { const d = document.createElement('div'); d.id = 'agentLine'; d.className = 'sub'; d.style.marginTop = '2px'; document.getElementById('sub').after(d); return d; })();
+    el.innerHTML = `✉ E-mail agent: ${txt} · ${a.imported_today} imported today${a.waiting ? ` · ${a.waiting} waiting` : ''}${a.unrouted ? ` · <a href="/review.html">${a.unrouted} need an account</a>` : ''}`;
+  } catch {}
+}
+
+async function load() {
+  const date = document.getElementById('workDate').value || todayISO();
+  document.getElementById('companies').innerHTML = '<div class="card pad muted">Loading…</div>';
+  try {
+    DATA = await api('/api/dashboard?date=' + date);
+    try { FUNDS = await api('/api/funds?date=' + date); } catch { FUNDS = null; }
+    loadMissing(date);
+  } catch (e) {
+    document.getElementById('companies').innerHTML = `<div class="card pad"><div class="msg err">${escapeHtml(e.message)}</div></div>`;
+    return;
+  }
+  render();
+}
+
+// which bank statements are still missing for the chosen day - shown prominently above the cards
+let MISSING_DATE = null;
+async function loadMissing(date) {
+  const box = document.getElementById('missingBanner');
+  MISSING_DATE = date;
+  try {
+    const m = await api('/api/missing?date=' + date);
+    if (m.off_day) { box.innerHTML = ''; return; }
+    const can = CTX && CTX.canUpload;
+    const closed = (m.closed || []).length
+      ? `<div class="closedline">Closed as correct: ${m.closed.map((c) => `<span>${escapeHtml(c.company.replace(/ (Pvt|Private) Limited/i, ''))} · ${escapeHtml(c.bank)} <small>by ${escapeHtml(c.closed_by || '')}</small>${can ? ` <a href="#" data-reopen="${c.account_id}">undo</a>` : ''}</span>`).join(' &nbsp;·&nbsp; ')}</div>` : '';
+    if (!m.missing.length) {
+      box.innerHTML = `<div class="miss ok"><h3>✓ All ${m.total} bank statements accounted for ${fmtDate(m.date)}${(m.closed || []).length ? ' (' + m.closed.length + ' closed by a user)' : ''}</h3>${closed}</div>`;
+    } else {
+      box.innerHTML = `<div class="miss"><h3>⚠ ${m.missing.length} of ${m.total} bank statements still missing for ${fmtDate(m.date)} <span style="font-weight:500;font-size:13px">— update these accounts, or close them if the balance shown is correct</span></h3>
+        <div class="chips">${m.missing.map((x) => `<span class="chip">${escapeHtml(x.company.replace(/ (Pvt|Private) Limited/i, ''))} · ${escapeHtml(x.bank)} <small>${x.last_statement_date ? 'last statement ' + fmtDate(x.last_statement_date) : 'none yet'}</small>${can ? ` <button class="sm" data-close="${x.account_id}" title="Accept the balance shown as correct and mark this account done">Close</button>` : ''}</span>`).join('')}</div>${closed}</div>`;
+    }
+    box.querySelectorAll('[data-close]').forEach((b) => b.onclick = () => closeMissing(Number(b.dataset.close), m));
+    box.querySelectorAll('[data-reopen]').forEach((a) => a.onclick = (e) => { e.preventDefault(); reopenMissing(Number(a.dataset.reopen)); });
+  } catch { box.innerHTML = ''; }
+}
+async function closeMissing(accountId, m) {
+  const x = m.missing.find((r) => r.account_id === accountId);
+  if (!confirm(`Close ${x.company} · ${x.bank} for ${fmtDate(m.date)}?
+
+The balance now shown for it will be treated as the correct balance for this day and the account counts as done. A statement that arrives later will not replace it (an administrator can still correct it).`)) return;
+  try { await api('/api/missing/close', { method: 'POST', body: JSON.stringify({ account_id: accountId, date: m.date }) }); load(); } catch (e) { alert(e.message); }
+}
+async function reopenMissing(accountId) {
+  try { await api(`/api/missing/close?account_id=${accountId}&date=${MISSING_DATE}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); }
+}
+
+function render() {
+  const d = DATA;
+  document.getElementById('sub').innerHTML =
+    `${d.group_name} · position as at <strong>${fmtDate(d.date)}</strong>` +
+    (d.is_off_day ? ' &nbsp;<span class="pill carried_forward">OFF DAY</span>' : '');
+
+  const c = d.counters;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi group"><div class="n">${moneyShort(d.group_total)}</div><div class="l">Group Position (PKR)</div></div>
+    <div class="kpi"><div class="n">${c.total}</div><div class="l">Total Accounts</div></div>
+    <div class="kpi done"><div class="n">${c.done || 0}</div><div class="l">Processed</div></div>
+    <div class="kpi pending"><div class="n">${c.pending || 0}</div><div class="l">Pending</div>${(c.pending ? `<button class="sm ghost" onclick="showBreakdown('pending')">Show</button>` : '')}</div>
+    <div class="kpi review"><div class="n">${(c.review || 0) + (c.error || 0)}</div><div class="l">Review / Error</div>${((c.review || c.error) ? `<button class="sm ghost" onclick="showBreakdown('review')">Show</button>` : '')}</div>
+    <div class="kpi"><div class="n">${c.carried_forward || 0}</div><div class="l">Carried Forward</div></div>`;
+
+  if (d.group_adjust) {
+    document.getElementById('kpis').insertAdjacentHTML('beforeend', `<div class="kpi"><div class="n">${moneyShort(d.group_net)}</div><div class="l">Group net of liens</div></div>`);
+  }
+  if (FUNDS && FUNDS.lines && FUNDS.lines.length) {
+    const hl = FUNDS.headlines && FUNDS.headlines[0];
+    if (hl) document.getElementById('kpis').insertAdjacentHTML('beforeend',
+      `<a href="/funds.html" style="text-decoration:none;color:inherit"><div class="kpi" style="border-color:#12507b"><div class="n" style="color:#12507b">${moneyShort(hl.value)}</div><div class="l">${escapeHtml(hl.label)}</div></div></a>`);
+  }
+  document.getElementById('companies').innerHTML = d.companies.map(companyCard).join('') ||
+    '<div class="card pad muted">No active companies configured. Go to <a href="/config.html">Setup</a>.</div>';
+}
+
+function companyCard(co) {
+  const rows = co.accounts.map((a) => {
+    const bal = a.balance != null ? money(a.balance) : '<span class="muted">—</span>';
+    const st = a.status;
+    const stLabel = STATUS_LABEL[st] || st;
+    const carried = a.carried_from ? ` <span class="muted">(from ${fmtDate(a.carried_from)})</span>` : '';
+    const view = a.statement_id ? `<button class="sm ghost" onclick="viewStatement(${a.statement_id})">View</button>` : '';
+    const canUpload = CTX && CTX.canUpload;
+    return `<tr>
+      <td class="bank">${escapeHtml(a.bank_name)}<div class="acct">${escapeHtml(a.account_number || a.account_title || '')}${a.has_password ? ' · 🔒' : ''}</div></td>
+      <td><div class="rowbtns" style="justify-content:flex-start">${canUpload ? `<button class="sm primary" onclick='openUpload(${JSON.stringify(a).replace(/'/g, "&#39;")}, ${co.company_id}, ${JSON.stringify(co.company_name)})'>📤 Upload</button>
+        <button class="sm" title="Enter a balance manually" onclick="manualFor(${a.account_id})">✎ Manual</button>
+        <button class="sm" title="Uploaded statements — view / delete" onclick="filesFor(${a.account_id})">Files</button>
+        ${(CTX.isSU || (a.adjustments || []).length) ? `<button class="sm" title="Liens / adjustments under this bank" onclick="adjFor(${a.account_id})">${(a.adjustments || []).length ? 'Lien' : '± Lien'}</button>` : ''}` : '<span class="muted">—</span>'}</div></td>
+      <td><span class="pill ${st}">${stLabel}</span>${carried}</td>
+      <td class="num">${bal}${(a.adjustments || []).filter((x) => x.amount).map((x) => `<div class="adj" onclick="adjFor(${a.account_id})" title="Click to change">${escapeHtml(x.name)} ${x.effect === 'add' ? '+' : '−'} ${money(x.amount)}</div>`).join('')}${(a.adjustments || []).some((x) => x.amount) && a.balance != null ? `<div class="adj net">Net ${money(a.net_balance)}</div>` : ''}</td>
+      <td class="num">${view}</td>
+    </tr>`;
+  }).join('');
+  return `<section class="company card">
+    <h2><span>${escapeHtml(co.company_name)}</span>
+        <span class="tot">${money(co.company_total)}<small>${co.accounts_known}/${co.accounts_total} accounts</small>${co.company_adjust ? `<div class="adj net" style="text-align:right">Net of liens ${money(co.company_net)}</div>` : ''}</span></h2>
+    <table class="grid">
+      <thead><tr><th>Bank</th><th>Upload Statement</th><th>Today's Status</th><th class="num">Balance (PKR)</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </section>`;
+}
+
+// ---------------- upload flow ----------------
+let UP = null;
+function openUpload(acc, companyId, companyName) {
+  UP = { acc, companyId, companyName, file: null, password: '' };
+  const dlg = document.getElementById('upDlg');
+  document.getElementById('upTitle').textContent = acc.bank_name;
+  document.getElementById('upSub').textContent = `${companyName}${acc.account_number ? ' · ' + acc.account_number : ''}`;
+  renderUploadPick();
+  dlg.showModal();
+}
+function closeUpload() { document.getElementById('upDlg').close(); UP = null; }
+
+function renderUploadPick(extra = '') {
+  document.getElementById('upBody').innerHTML = `
+    <div class="drop" id="drop">
+      <div style="font-size:22px">📄</div>
+      <div><strong>Drag &amp; drop</strong> the statement here, or click to choose</div>
+      <div class="muted" style="margin-top:4px">Excel (.xlsx / .xls) · PDF · JPG · PNG</div>
+      <div id="fileName" style="margin-top:8px;font-weight:600"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.pdf,.jpg,.jpeg,.png" hidden>
+    <label class="fld" id="pwWrap" style="margin-top:12px;${UP.needPw ? '' : 'display:none'}">
+      <span>PDF password ${UP.acc.has_password ? '(a saved password is on file)' : ''}</span>
+      <input type="password" id="pwInput" placeholder="Enter statement password" value="${escapeHtml(UP.password || '')}">
+    </label>
+    ${extra}`;
+  const drop = document.getElementById('drop'), fi = document.getElementById('fileInput');
+  drop.addEventListener('click', () => fi.click());
+  fi.addEventListener('change', () => setFile(fi.files[0]));
+  ['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); }));
+  drop.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+  renderUploadFoot();
+}
+function setFile(f) {
+  if (!f) return;
+  UP.file = f;
+  document.getElementById('fileName').textContent = f.name + '  (' + Math.round(f.size / 1024) + ' KB)';
+  renderUploadFoot();
+}
+function renderUploadFoot(processing) {
+  document.getElementById('upFoot').innerHTML = `
+    <button onclick="closeUpload()">Cancel</button>
+    <button class="primary" id="procBtn" ${(!UP.file || processing) ? 'disabled' : ''}>
+      ${processing ? 'Processing…' : 'Process Statement'}</button>`;
+  const b = document.getElementById('procBtn');
+  if (b) b.addEventListener('click', doProcess);
+}
+
+async function doProcess(force) {
+  const pw = document.getElementById('pwInput');
+  if (pw) UP.password = pw.value;
+  renderUploadFoot(true);
+  const fd = new FormData();
+  fd.append('file', UP.file);
+  fd.append('account_id', UP.acc.account_id);
+  if (UP.password) fd.append('password', UP.password);
+  if (force === true) fd.append('force', 'true');
+  let r;
+  try {
+    r = await api('/api/upload', { method: 'POST', body: fd });
+  } catch (e) {
+    renderUploadPick(`<div class="errbox">${escapeHtml(e.message)}</div>`);
+    return;
+  }
+  if (r.needPassword) {
+    UP.needPw = true;
+    renderUploadPick(`<div class="warnbox">${escapeHtml(r.message)}</div>`);
+    return;
+  }
+  if (r.duplicate) {
+    document.getElementById('upBody').innerHTML =
+      `<div class="warnbox">${escapeHtml(r.message)}</div>
+       <dl class="kv" style="margin-top:10px">
+         <dt>Statement date</dt><dd>${fmtDate(r.statement.latest_statement_date)}</dd>
+         <dt>Balance</dt><dd>${money(r.statement.extracted_balance)}</dd>
+         <dt>Uploaded</dt><dd>${fmtDate(r.statement.uploaded_at)} by ${escapeHtml(r.statement.uploaded_by || '')}</dd>
+       </dl>`;
+    document.getElementById('upFoot').innerHTML =
+      `<button onclick="closeUpload()">Close</button>
+       <button class="primary" onclick="doProcess(true)">Process anyway</button>`;
+    return;
+  }
+  renderResult(r.result, r.statement_id, r.replaced_previous);
+  load();
+}
+
+function renderResult(res, sid, replaced) {
+  const ok = res.status === 'processed';
+  const box = ok ? 'okbox' : (res.status === 'error' ? 'errbox' : 'warnbox');
+  const head = ok ? '✓ Statement processed successfully'
+    : res.status === 'error' ? '✕ Processing failed'
+    : '🟡 Review required — nothing was posted automatically';
+  const warn = (res.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join('');
+  document.getElementById('upBody').innerHTML = `
+    <div class="${box}">${head}</div>
+    ${replaced ? '<div class="warnbox" style="margin-top:8px">This file was uploaded before — it has been re-processed and the earlier upload replaced.</div>' : ''}
+    <div class="big-balance">${money(res.extracted_balance, res.currency)}</div>
+    <dl class="kv">
+      <dt>Company</dt><dd>${escapeHtml(res.company)}</dd>
+      <dt>Bank</dt><dd>${escapeHtml(res.bank)}</dd>
+      <dt>File</dt><dd>${escapeHtml(res.file_name)}</dd>
+      <dt>Latest statement date</dt><dd>${fmtDate(res.latest_statement_date)}</dd>
+      <dt>Opening balance</dt><dd>${money(res.opening_balance)}</dd>
+      <dt>Reported closing</dt><dd>${money(res.closing_balance_reported)}</dd>
+      <dt>Method</dt><dd>${escapeHtml(res.method || '—')} · ${escapeHtml(res.parser || '')}</dd>
+      <dt>Transactions read</dt><dd>${res.txn_count ?? '—'}</dd>
+      ${res.days_posted != null && res.status === 'processed' ? `<dt>Daily balances posted</dt><dd><strong>${res.days_posted}</strong> day(s)${res.first_day ? ` · ${fmtDate(res.first_day)} → ${fmtDate(res.last_day)}` : ''}${res.days_kept_manual ? ` · ${res.days_kept_manual} manual day(s) kept` : ''}</dd>` : ''}
+    </dl>
+    <div class="tag" style="margin-top:12px">Confidence ${(Math.round((res.confidence || 0) * 100))}%</div>
+    <div class="conf"><i style="width:${Math.round((res.confidence || 0) * 100)}%"></i></div>
+    ${warn ? `<div class="warnbox"><strong>Notes</strong><ul style="margin:6px 0 0 16px">${warn}</ul></div>` : ''}
+    ${res.error ? `<div class="errbox">${escapeHtml(res.error)}</div>` : ''}`;
+  document.getElementById('upFoot').innerHTML =
+    `${sid ? `<button onclick="viewStatement(${sid})">View statement</button>` : ''}
+     ${res.status !== 'processed' ? `<button onclick="location.href='/review.html'">Open Review Queue</button>` : ''}
+     <button class="primary" onclick="closeUpload()">Done</button>`;
+}
+
+window.openUpload = openUpload; window.closeUpload = closeUpload; window.doProcess = doProcess;
+window.showBreakdown = showBreakdown;
+window.adjFor = function (id) {
+  const { a, co } = findAcc(id);
+  BPP.adjustmentsDialog({ accountId: id, title: `${co.company_name} · ${a.bank_name}`, date: document.getElementById('workDate').value, onChanged: load });
+};
+function findAcc(id) { for (const co of DATA.companies) for (const a of co.accounts) if (a.account_id === id) return { a, co }; }
+window.manualFor = function (id) {
+  const { a, co } = findAcc(id);
+  BPP.manualDialog({ accountId: id, title: `${co.company_name} · ${a.bank_name}`, date: document.getElementById('workDate').value,
+    balance: a.balance, isManual: a.source_type === 'manual', onSaved: load });
+};
+window.filesFor = function (id) {
+  const { a, co } = findAcc(id);
+  BPP.statementsDialog({ accountId: id, title: `${co.company_name} · ${a.bank_name}`, canDelete: true, onChanged: load });
+};
+function viewStatement(id) { window.open('/api/statements/' + id + '/file', '_blank'); }
+window.viewStatement = viewStatement;
+
+async function showBreakdown(status) {
+  const date = document.getElementById('workDate').value;
+  const r = await api(`/api/dashboard/breakdown?date=${date}&status=${status}`);
+  const dlg = document.getElementById('upDlg');
+  document.getElementById('upTitle').textContent = status === 'pending' ? 'Pending statements' : 'Needs review';
+  document.getElementById('upSub').textContent = fmtDate(date);
+  document.getElementById('upBody').innerHTML = r.rows.length ? `<table class="grid"><thead><tr><th>Company</th><th>Bank</th><th>Status</th></tr></thead>
+    <tbody>${r.rows.map(x => `<tr><td>${escapeHtml(x.company)}</td><td>${escapeHtml(x.bank)}<div class="acct">${escapeHtml(x.account_number || '')}</div></td><td><span class="pill ${x.status}">${STATUS_LABEL[x.status] || x.status}</span></td></tr>`).join('')}</tbody></table>`
+    : '<div class="muted">Nothing here — all clear.</div>';
+  document.getElementById('upFoot').innerHTML = '<button class="primary" onclick="closeUpload()">Close</button>';
+  dlg.showModal();
+}
+</script>
+</body>
+</html>

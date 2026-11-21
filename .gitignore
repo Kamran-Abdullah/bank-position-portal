@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+*.log
+.session-secret
+data/*.db
+data/*.db-shm
+data/*.db-wal
+backups/
+storage/statements/*
+!storage/statements/.gitkeep
+scratch/
+Inbox Drop/
+outlook-agent/state.json
+outlook-agent/agent.log
+Bank Statements/
+*.xls
+*.pdf

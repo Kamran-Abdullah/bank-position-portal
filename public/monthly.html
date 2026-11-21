@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monthly Position · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+.mgrid{border-collapse:separate;border-spacing:0;font-size:13px}
+.mgrid th,.mgrid td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:9px 12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;min-width:66px}
+.mgrid thead th{background:#f2f5f9;position:sticky;top:0;z-index:3;font-weight:650;color:var(--ink)}
+.mgrid th.lbl,.mgrid td.lbl{text-align:left;position:sticky;left:0;background:#fff;z-index:2;min-width:280px;border-right:2px solid var(--line)}
+.mgrid thead th.lbl{z-index:4}
+.mgrid td.off{background:#f6f1e6}
+.mgrid th.off{background:#efe7d5;color:#8a5d10}
+.mgrid th.off .wd{color:#8a5d10}
+.mgrid th.clickable{cursor:pointer}
+.mgrid th.clickable:hover{background:#e3ecf5}
+.mgrid td.cf{color:var(--grey-ink)}
+.mgrid td.mn{color:var(--brand-ink);font-weight:650}
+.mgrid td.rv{color:var(--amber-ink)}
+.mgrid tr.company-head td{background:#eef3f8;font-weight:700;color:var(--brand-ink);border-top:2px solid var(--line);text-align:left;position:sticky;left:0}
+.mgrid tr.subtotal td{background:#f7f9fb;font-weight:650}
+.mgrid tr.grand td{background:#12507b;color:#fff;font-weight:750;border-color:#12507b}
+.mgrid tr.grand td.lbl{background:#12507b;color:#fff}
+.mgrid tr.adjrow td{color:#8a5d10;font-size:12px;background:#fffdf6}
+.mgrid tr.netrow td{font-weight:650;background:#f6fbf6}
+.mgrid tr.grand.net td{background:#0d3c5c;border-color:#0d3c5c}
+.mgrid tr.spacer td{height:14px;background:var(--bg);border-right:0;border-bottom:0}
+.mgrid th .wd{display:block;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.scroller{overflow:auto;max-height:76vh;border-radius:12px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+.legend b{color:var(--ink);font-weight:600}
+.printhead{display:none}
+@media print{
+  @page{size:A4 landscape;margin:8mm}
+  html,body{background:#fff!important}
+  header.top,.toolbar,.legend,.pagehead h1,.pagehead .sub{display:none!important}
+  main{padding:0!important}
+  .wrap{max-width:none!important;width:100%!important;margin:0!important;padding:0!important}
+  .card{border:0!important;box-shadow:none!important;border-radius:0!important}
+  .scroller{max-height:none!important;overflow:visible!important;border-radius:0}
+  .printhead{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #12507b;padding-bottom:6px;margin-bottom:8px}
+  .printhead h2{margin:0;font-size:15px;color:#12507b}
+  .printhead .meta{font-size:10px;color:#333;text-align:right}
+  .mgrid{width:100%;font-size:7px;table-layout:fixed}
+  .mgrid th,.mgrid td{padding:2px 3px;min-width:0;border-color:#c9d2df}
+  .mgrid th.lbl,.mgrid td.lbl{min-width:0;width:34mm;position:static!important;white-space:normal;line-height:1.15}
+  .mgrid thead th{position:static!important;background:#e9eef4!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .mgrid thead{display:table-header-group}
+  .mgrid tr,.mgrid td,.mgrid th{page-break-inside:avoid}
+  .mgrid tr.company-head td{position:static!important;background:#dde8f2!important;page-break-after:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .mgrid tr.subtotal td,.mgrid td.off,.mgrid th.off{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .mgrid tr.spacer{display:none}
+  .mgrid tr.grand td{background:#12507b!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .lbl .co-in-label{display:none}
+  .mgrid td.cf{color:#5b6472!important}
+}
+</style>
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead">
+    <div><h1>Monthly Bank Position</h1>
+      <div class="sub">Daily closing balance per account, in <b>PKR millions</b>.</div>
+      <div class="legend">
+        <span><b style="color:var(--ink)">10.87</b> actual</span>
+        <span><b style="color:var(--grey-ink)">10.87</b> carried forward</span>
+        <span><b style="color:var(--brand-ink)">10.87</b> manual</span>
+        <span><b style="color:#8a5d10">shaded</b> off-day</span>
+        <span class="hint" id="clickHint"></span>
+      </div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <input type="month" id="mon" style="width:160px">
+      <button id="go" class="primary sm">Show</button>
+      <button id="pdf" class="sm">Export PDF</button>
+      <button id="csv" class="sm">CSV</button>
+    </div>
+  </div>
+  <div class="printhead" id="printhead"></div>
+  <div class="card"><div class="scroller" id="grid"><div class="pad muted">Loading…</div></div></div>
+  <datalist id="headNames"><option value="Lien on Bank Accounts"><option value="Lien on Export Proceeds"><option value="Lien on Account (Internal)"><option value="Lien on Salary"><option value="Returnable to Distributor (Institutional)"><option value="Returnable to CE"><option value="Unpresented Cheques"></datalist>
+</div></main>
+<script src="/common.js"></script>
+<script>
+const { api, escapeHtml, fmtDate } = BPP;
+let DATA = null, CAN_EDIT = false, CAN_MANUAL = false, FB = null;
+// the funds statement follows the month on screen: today for the current month, otherwise the last day of that month
+function fundsDate() {
+  const [y, m] = document.getElementById('mon').value.split('-').map(Number);
+  const today = new Date().toISOString().slice(0, 10), last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  return last < today ? last : today;
+}
+const WD = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+(async function () {
+  const me = await BPP.mountChrome('monthly');
+  CAN_EDIT = me.user.role === 'super_user';
+  CAN_MANUAL = CAN_EDIT || !!(me.permissions && me.permissions.upload);
+  document.getElementById('clickHint').textContent = (CAN_EDIT ? '· click a day number to mark / unmark an off-day' : '') + (CAN_MANUAL ? ' · click a cell to enter / edit a balance' : '');
+  document.getElementById('mon').value = new Date().toISOString().slice(0, 7);
+  document.getElementById('go').addEventListener('click', load);
+  document.getElementById('pdf').addEventListener('click', exportPdf);
+  document.getElementById('csv').addEventListener('click', exportCsv);
+  load();
+})();
+
+const mil = (n) => (n == null ? '' : (n / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+async function load() {
+  const [y, m] = document.getElementById('mon').value.split('-').map(Number);
+  document.getElementById('grid').innerHTML = '<div class="pad muted">Loading…</div>';
+  DATA = await api(`/api/monthly?year=${y}&month=${m}`);
+  render();
+}
+
+function render() {
+  const d = DATA, days = d.days;
+  const dnum = (i) => `${d.year}-${String(d.month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+  const wdOf = (i) => new Date(dnum(i) + 'T00:00:00Z').getUTCDay();
+
+  const head = `<tr>
+    <th class="lbl">Company / Bank</th>
+    ${Array.from({ length: days }, (_, i) => {
+      const off = d.offdays[i];
+      return `<th class="${off ? 'off' : ''} ${CAN_EDIT ? 'clickable' : ''}" data-day="${i + 1}" title="${fmtDate(dnum(i))}${off ? ' · OFF' : ''}">
+        ${i + 1}<span class="wd">${WD[wdOf(i)]}</span></th>`;
+    }).join('')}
+  </tr>`;
+
+  let body = '';
+  let lastCompany = null;
+  for (const r of d.rows) {
+    if (r.company_id !== lastCompany) {
+      if (lastCompany !== null) {
+        body += companyFoot(lastCompany);
+        body += `<tr class="spacer"><td colspan="${days + 1}"></td></tr>`;
+      }
+      body += `<tr class="company-head"><td colspan="${days + 1}">${escapeHtml(r.company)}</td></tr>`;
+      lastCompany = r.company_id;
+    }
+    body += `<tr>
+      <td class="lbl"><span class="co-in-label">${escapeHtml(r.company)} <span class="muted">· </span></span><b>${escapeHtml(r.bank)}</b>${r.account_title && r.account_title !== r.company ? `<span class="muted"> · ${escapeHtml(r.account_title)}</span>` : ''}</td>
+      ${r.cells.map((c, i) => cell(c, d.offdays[i], r.account_id, i + 1, r.net_cells ? r.net_cells[i] : null)).join('')}
+    </tr>`;
+    body += adjRows(r);
+  }
+  if (lastCompany !== null) body += companyFoot(lastCompany);
+  if (d.rows.length) {
+    // the lien is a reserve inside the bank balance: it is listed on its own line but totals are the regular bank balances
+    body += `<tr class="spacer"><td colspan="${days + 1}"></td></tr><tr class="grand"><td class="lbl">GRAND TOTAL — All Companies</td>${d.grandTotals.map((v, i) => `<td>${v == null ? '' : mil(v)}</td>`).join('')}</tr>`;
+  }
+  if (!d.rows.length) body = `<tr><td class="lbl muted">No active accounts.</td></tr>`;
+
+  document.getElementById('grid').innerHTML = `<table class="mgrid"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+
+  const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  document.getElementById('printhead').innerHTML =
+    `<h2>Monthly Bank Position — ${MON[d.month - 1]} ${d.year}</h2>
+     <div class="meta">Demo Group of Companies<br>Values in PKR millions · generated ${new Date().toLocaleString('en-GB')}</div>`;
+
+  if (CAN_MANUAL) {
+    document.querySelectorAll('.mgrid td[data-acc]').forEach((td) => td.addEventListener('click', () => {
+      const accId = Number(td.dataset.acc), day = Number(td.dataset.day);
+      const row = DATA.rows.find((r) => r.account_id === accId), c = row.cells[day - 1];
+      BPP.manualDialog({ accountId: accId, title: `${row.company} · ${row.bank}`,
+        date: `${DATA.year}-${String(DATA.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        balance: c && c.balance != null ? c.balance : '', isManual: !!(c && c.source === 'manual'), onSaved: load });
+    }));
+  }
+  if (CAN_EDIT) {
+    document.querySelectorAll('.mgrid th.clickable').forEach((th) => th.addEventListener('click', () => toggleOffDay(Number(th.dataset.day))));
+  }
+}
+
+
+function signed(adj, v) { return v == null ? '' : v ? mil(v) : '0.00'; }
+function adjRows(r) {
+  if (!r.adjustments || !r.adjustments.length) return '';
+  const d = DATA;
+  const lines = r.adjustments.map((a) => `<tr class="adjrow"><td class="lbl"><span class="co-in-label">${escapeHtml(r.company)} · </span>&nbsp;&nbsp;↳ <i>${escapeHtml(a.name)}</i></td>${a.cells.map((v, i) => `<td class="${d.offdays[i] ? 'off' : ''}">${signed(a, v)}</td>`).join('')}</tr>`).join('');
+  return lines;
+}
+function companyFoot(cid) {
+  const d = DATA;
+  return subtotalRow(d.companyTotals[cid], d.days, d.offdays);
+}
+
+// `net` = the balance after liens: the bank row shows it, while company / grand totals still count the full bank balance
+function cell(c, off, acc, day, net) {
+  const attr = CAN_MANUAL && acc ? ` data-acc="${acc}" data-day="${day}" style="cursor:pointer"` : '';
+  if (!c) return `<td class="${off ? 'off' : ''}"${attr} title="${CAN_MANUAL ? 'Click to enter a balance' : ''}"></td>`;
+  const cls = c.source === 'carried_forward' ? 'cf' : c.source === 'manual' ? 'mn' : c.status === 'review' ? 'rv' : '';
+  return `<td class="${cls} ${off ? 'off' : ''}"${attr} title="${c.source} · ${c.status}${CAN_MANUAL ? ' — click to edit' : ''}">${c.balance == null ? '' : mil(net != null ? net : c.balance)}</td>`;
+}
+function subtotalRow(t, days, offdays) {
+  if (!t) return '';
+  return `<tr class="subtotal"><td class="lbl">${escapeHtml(t.company)} — total</td>${t.cells.map((v, i) => `<td class="${offdays[i] ? 'off' : ''}">${v == null ? '' : mil(v)}</td>`).join('')}</tr>`;
+}
+
+async function toggleOffDay(day) {
+  const iso = `${DATA.year}-${String(DATA.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const isHol = DATA.holidays.some((h) => h.holiday_date === iso);
+  try {
+    if (isHol) { await api('/api/holidays/' + iso, { method: 'DELETE' }); }
+    else { await api('/api/holidays', { method: 'POST', body: JSON.stringify({ holiday_date: iso, name: 'Marked off-day' }) }); }
+    load();
+  } catch (e) { alert(e.message); }
+}
+
+function exportPdf() {
+  const d = DATA, days = d.days;
+  const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dnum = (i) => `${d.year}-${String(d.month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+  const wdOf = (i) => new Date(dnum(i) + 'T00:00:00Z').getUTCDay();
+  // millions with two decimals: the same figures as the on-screen grid
+  const m1 = (n) => (n == null ? '' : (n / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const labelW = 17;
+  const colw = ((100 - labelW) / days).toFixed(3);
+  const cols = `<col style="width:${labelW}%">` + Array.from({ length: days }, () => `<col style="width:${colw}%">`).join('');
+  const head = `<tr><th class="l">Bank</th>${Array.from({ length: days }, (_, i) =>
+    `<th class="${d.offdays[i] ? 'off' : ''}">${i + 1}<br>${WD[wdOf(i)]}</th>`).join('')}</tr>`;
+  let body = '', last = null;
+  for (const r of d.rows) {
+    if (r.company_id !== last) {
+      if (last !== null) body += subRow(d.companyTotals[last]) + `<tr class="gap"><td colspan="${days + 1}"></td></tr>`;
+      body += `<tr class="co"><td class="l" colspan="${days + 1}">${escapeHtml(r.company)}</td></tr>`;
+      last = r.company_id;
+    }
+    body += `<tr><td class="l">${escapeHtml(r.bank)}</td>${
+      r.cells.map((c, i) => {
+        if (!c) return `<td class="${d.offdays[i] ? 'off' : ''}"></td>`;
+        const cls = c.source === 'carried_forward' ? 'cf' : c.source === 'manual' ? 'mn' : '';
+        // a bank with a lien shows its balance after the lien; totals below still count the full bank balance
+        const shown = r.net_cells && r.net_cells[i] != null ? r.net_cells[i] : c.balance;
+        return `<td class="${cls} ${d.offdays[i] ? 'off' : ''}">${m1(shown)}</td>`;
+      }).join('')}</tr>`;
+    if (r.adjustments && r.adjustments.length) {
+      r.adjustments.forEach((a) => { body += `<tr><td class="l" style="color:#8a5d10">&nbsp;&nbsp;↳ ${escapeHtml(a.name)}</td>${a.cells.map((v, i) => `<td class="${d.offdays[i] ? 'off' : ''}">${v ? m1(v) : ''}</td>`).join('')}</tr>`; });
+    }
+  }
+  if (last !== null) body += subRow(d.companyTotals[last]) + `<tr class="gap"><td colspan="${days + 1}"></td></tr>`;
+  // the lien is a reserve inside the bank balance: listed on its own line, totals are the regular bank balances
+  body += `<tr class="grand"><td class="l">GRAND TOTAL</td>${d.grandTotals.map((v) => `<td>${v == null ? '' : m1(v)}</td>`).join('')}</tr>`;
+  BPP.printDoc({
+    title: `Monthly Bank Position — ${MON[d.month - 1]} ${d.year}`,
+    subtitle: 'Daily closing balance per account · PKR millions · shaded = off-day',
+    orientation: 'landscape',
+    tableHtml: `<style>.mpdf th,.mpdf td{padding:3px 1px;font-size:7px;overflow:visible;text-overflow:clip}.mpdf td.l,.mpdf th.l{padding-left:4px}.mpdf tr.grand td{font-size:7px}</style><table class="mpdf" style="font-size:7px"><colgroup>${cols}</colgroup><thead>${head}</thead><tbody>${body}</tbody></table>` +
+      '',
+  });
+  function subRow(t) {
+    if (!t) return '';
+    return `<tr class="sub"><td class="l">Company total</td>${t.cells.map((v, i) => `<td class="${d.offdays[i] ? 'off' : ''}">${v == null ? '' : m1(v)}</td>`).join('')}</tr>`;
+  }
+}
+
+function exportCsv() {
+  const d = DATA;
+  const rows = [['Company', 'Bank', ...Array.from({ length: d.days }, (_, i) => i + 1)]];
+  d.rows.forEach((r) => {
+    rows.push([r.company, r.bank, ...r.cells.map((c) => c ? c.balance : '')]);
+    (r.adjustments || []).forEach((a) => rows.push([r.company, r.bank + ' - ' + a.name, ...a.cells.map((v) => (a.effect === 'add' ? v : -v))]));
+    if (r.net_cells) rows.push([r.company, r.bank + ' - net balance', ...r.net_cells.map((v) => v == null ? '' : v)]);
+  });
+  rows.push(['GRAND TOTAL', 'All companies', ...d.grandTotals.map((v) => v == null ? '' : v)]);
+  if (d.hasAdjustments) rows.push(['GRAND TOTAL', 'net of liens', ...d.grandNet.map((v) => v == null ? '' : v)]);
+  const txt = rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv' }));
+  a.download = `monthly-position-${d.year}-${String(d.month).padStart(2, '0')}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>

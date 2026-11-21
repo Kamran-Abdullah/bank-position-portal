@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reports · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+table.rep{width:100%;border-collapse:collapse;table-layout:fixed}
+table.rep th,table.rep td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left}
+table.rep td.bank,table.rep td.acct{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.rep th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:#fafbfd}
+table.rep col.c-bank{width:22%} table.rep col.c-acct{width:26%} table.rep col.c-status{width:20%} table.rep col.c-bal{width:32%}
+table.rep td.num,table.rep th.num{text-align:right;font-variant-numeric:tabular-nums}
+table.rep tr.co td{background:#eef3f8;font-weight:700;color:var(--brand-ink);border-top:2px solid var(--line)}
+table.rep tr.adj td{color:#8a5d10;font-size:12.5px;background:#fffdf6}
+table.rep tr.netr td{font-weight:650}
+table.rep tr.sub td{background:#f7f9fb;font-weight:650}
+table.rep tr.grand td{background:#12507b;color:#fff;font-weight:750;font-size:15px}
+.printhead{display:none}
+@media print{
+  @page{size:A4 portrait;margin:12mm}
+  html,body{background:#fff!important}
+  header.top,.toolbar,.pagehead h1,.pagehead .sub{display:none!important}
+  main{padding:0!important}
+  .wrap{max-width:none!important;width:100%!important;margin:0!important;padding:0!important}
+  .card{border:0!important;box-shadow:none!important;border-radius:0!important}
+  .printhead{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #12507b;padding-bottom:6px;margin-bottom:10px}
+  .printhead h2{margin:0;font-size:16px;color:#12507b}
+  .printhead .meta{font-size:10px;color:#333;text-align:right}
+  table.rep{font-size:10px}
+  table.rep th,table.rep td{padding:5px 8px;border-color:#c9d2df}
+  table.rep thead{display:table-header-group}
+  table.rep tr,table.rep td{page-break-inside:avoid}
+  table.rep tr.co td{page-break-after:avoid}
+  table.rep tr.co td,table.rep tr.sub td,table.rep tr.grand td,table.rep th,.pill{
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead">
+    <div><h1>Daily Bank Position</h1><div class="sub" id="sub">—</div></div>
+    <div class="toolbar" style="margin:0">
+      <input type="date" id="d" style="width:170px">
+      <button class="sm" id="pdf">Export PDF</button>
+      <button class="sm" id="csv">CSV</button>
+    </div>
+  </div>
+  <div class="printhead" id="printhead"></div>
+  <div class="card" id="out"><div class="pad muted">Loading…</div></div>
+  <datalist id="headNames"><option value="Lien on Bank Accounts"><option value="Lien on Export Proceeds"><option value="Lien on Account (Internal)"><option value="Lien on Salary"><option value="Returnable to Distributor (Institutional)"><option value="Returnable to CE"><option value="Unpresented Cheques"></datalist>
+  <div id="fundsHost"></div>
+</div></main>
+<script src="/common.js"></script>
+<script src="/funds-block.js"></script>
+<script>
+const { api, money, fmtDate, escapeHtml, todayISO } = BPP;
+let LAST = null, FB = null;
+(async function () {
+  await BPP.mountChrome('reports');
+  const d = document.getElementById('d');
+  d.value = todayISO();
+  d.addEventListener('change', build);          // no Build button — loads on change
+  document.getElementById('pdf').addEventListener('click', exportPdf);
+  document.getElementById('csv').addEventListener('click', downloadCsv);
+  build();
+})();
+
+async function build() {
+  const date = document.getElementById('d').value || todayISO();
+  document.getElementById('out').innerHTML = '<div class="pad muted">Loading…</div>';
+  const data = await api('/api/dashboard?date=' + date);
+  LAST = data;
+  if (!FB) FB = FundsBlock.mount(document.getElementById('fundsHost'), { getDate: () => document.getElementById('d').value || todayISO() }); else FB.reload();
+  document.getElementById('sub').innerHTML =
+    `${escapeHtml(data.group_name)} · as at <strong>${fmtDate(data.date)}</strong>` + (data.is_off_day ? ' · OFF DAY' : '');
+  document.getElementById('printhead').innerHTML =
+    `<h2>Daily Bank Position — ${fmtDate(data.date)}</h2>
+     <div class="meta">${escapeHtml(data.group_name)}${data.is_off_day ? ' · OFF DAY' : ''}<br>Amounts in PKR · generated ${new Date().toLocaleString('en-GB')}</div>`;
+
+  const STATUS = BPP.STATUS_LABEL;
+  let rows = '';
+  let firstCo = true;
+  for (const co of data.companies) {
+    if (!firstCo) rows += `<tr class="gap"><td colspan="4" style="border:0;background:transparent;height:12px;padding:0"></td></tr>`;
+    firstCo = false;
+    rows += `<tr class="co"><td colspan="3">${escapeHtml(co.company_name)}</td><td class="num">${money(co.company_total)}</td></tr>`;
+    for (const a of co.accounts) {
+      rows += `<tr>
+        <td class="bank">${escapeHtml(a.bank_name)}</td>
+        <td class="acct">${escapeHtml(a.account_number || a.account_title || '—')}</td>
+        <td><span class="pill ${a.status}">${STATUS[a.status] || a.status}</span></td>
+        <td class="num">${a.balance == null ? '—' : money(shownBal(a))}</td></tr>`;
+      (a.adjustments || []).filter((x) => x.amount).forEach((x) => { rows += `<tr class="adj"><td colspan="3" style="padding-left:34px">↳ ${escapeHtml(x.name)}</td><td class="num">${money(x.amount)}</td></tr>`; });
+    }
+    rows += `<tr class="sub"><td colspan="3">${escapeHtml(co.company_name)} — total (${co.accounts_known}/${co.accounts_total})</td><td class="num">${money(co.company_total)}</td></tr>`;
+  }
+  rows += `<tr class="grand"><td colspan="3">${escapeHtml(data.group_name)} — Group Position</td><td class="num">${money(data.group_total)}</td></tr>`;
+
+  document.getElementById('out').innerHTML = `
+    <table class="rep">
+      <colgroup><col class="c-bank"><col class="c-acct"><col class="c-status"><col class="c-bal"></colgroup>
+      <thead><tr><th>Bank</th><th>Account</th><th>Status</th><th class="num">Balance (PKR)</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// a bank with a lien shows its balance after the lien; company and group totals still count the full bank balance
+function shownBal(a) { return a.balance != null && (a.adjustments || []).some((x) => x.amount) && a.net_balance != null ? a.net_balance : a.balance; }
+
+function exportPdf() {
+  if (!LAST) return;
+  const S = BPP.STATUS_LABEL;
+  let rows = '';
+  let firstCoP = true;
+  for (const co of LAST.companies) {
+    if (!firstCoP) rows += `<tr class="gap"><td colspan="4"></td></tr>`;
+    firstCoP = false;
+    rows += `<tr class="co"><td class="l" colspan="3">${escapeHtml(co.company_name)}</td><td style="text-align:right">${money(co.company_total)}</td></tr>`;
+    for (const a of co.accounts) {
+      rows += `<tr><td class="l">${escapeHtml(a.bank_name)}</td><td class="l">${escapeHtml(a.account_number || a.account_title || '—')}</td>` +
+        `<td class="l">${S[a.status] || a.status}</td><td>${a.balance == null ? '—' : money(shownBal(a))}</td></tr>`;
+      (a.adjustments || []).filter((x) => x.amount).forEach((x) => { rows += `<tr><td class="l" colspan="3" style="color:#8a5d10">&nbsp;&nbsp;↳ ${escapeHtml(x.name)}</td><td>${money(x.amount)}</td></tr>`; });
+    }
+    rows += `<tr class="sub"><td class="l" colspan="3">${escapeHtml(co.company_name)} — total (${co.accounts_known}/${co.accounts_total})</td><td>${money(co.company_total)}</td></tr>`;
+  }
+  rows += `<tr class="grand"><td class="l" colspan="3">${escapeHtml(LAST.group_name)} — Group Position</td><td>${money(LAST.group_total)}</td></tr>`;
+  BPP.printDoc({
+    title: `Daily Bank Position — ${fmtDate(LAST.date)}`,
+    subtitle: LAST.is_off_day ? 'OFF DAY · amounts in PKR' : 'Amounts in PKR',
+    orientation: 'portrait',
+    titleRight: true,
+    tableHtml: `<table><colgroup><col style="width:22%"><col style="width:30%"><col style="width:20%"><col style="width:28%"></colgroup>
+      <thead><tr><th class="l">Bank</th><th class="l">Account</th><th class="l">Status</th><th>Balance (PKR)</th></tr></thead>
+      <tbody>${rows}</tbody></table>` +
+      (FB && FB.html() ? `<h2 style="color:#12507b;font-size:14px;margin:18px 0 6px">Available Funds — ${fmtDate(FB.data().date)}</h2>${FB.html()}` : ''),
+  });
+}
+
+function downloadCsv() {
+  if (!LAST) return;
+  const rows = [['Date', 'Company', 'Bank', 'Account', 'Status', 'Balance']];
+  LAST.companies.forEach((co) => co.accounts.forEach((a) => {
+    rows.push([LAST.date, co.company_name, a.bank_name, a.account_number || a.account_title || '', a.status, a.balance ?? '']);
+    (a.adjustments || []).filter((x) => x.amount).forEach((x) => rows.push([LAST.date, co.company_name, a.bank_name + ' - ' + x.name, '', '', x.effect === 'add' ? x.amount : -x.amount]));
+    if ((a.adjustments || []).some((x) => x.amount)) rows.push([LAST.date, co.company_name, a.bank_name + ' - net balance', '', '', a.net_balance ?? '']);
+  }));
+  rows.push([LAST.date, 'GROUP TOTAL', '', '', '', LAST.group_total]);
+  const txt = rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv' }));
+  a.download = `bank-position-${LAST.date}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>

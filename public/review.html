@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Review Queue · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead"><div><h1>Review Queue</h1><div class="sub">Statements the system could not post automatically.</div></div>
+    <button class="sm" id="helpBtn">How this works</button></div>
+
+  <div class="card pad" id="help" style="display:none">
+    <h3 style="margin-top:0">How the Review Queue works</h3>
+    <ol style="margin:0 0 0 18px;line-height:1.7">
+      <li>When you upload a statement, the system reads it, finds the latest statement date and the closing balance for that date, and scores its <b>confidence</b>.</li>
+      <li>If confidence is at or above the threshold (Settings, default 75%) <b>and</b> the file matches the bank/account it was uploaded against, the balance posts straight to the dashboard — that account turns 🟢 <b>Done</b>.</li>
+      <li>Otherwise nothing is posted. The upload lands here as 🟡 <b>Review Required</b> (or 🔴 <b>Processing Error</b>). Typical reasons: the file looks like a different bank, no closing-balance label and the running-balance chain was ambiguous, an unreadable/scanned PDF, or the extracted figure disagreed with <code>opening + credits − debits</code>.</li>
+      <li>Click <b>Resolve</b> on a row. You see what the system read, and can open the original file. Then either:
+        <ul style="margin:4px 0 0 16px">
+          <li><b>Confirm</b> — leave the balance field blank to accept the figure the system extracted.</li>
+          <li><b>Correct</b> — type the right balance and a reason. The original extraction is never overwritten; the correction is recorded (who, when, why) for audit.</li>
+        </ul>
+      </li>
+      <li>On confirm, the balance posts to the dashboard for that statement date, the account turns 🟢 Done, and company / group totals update. The row leaves this queue.</li>
+    </ol>
+  </div>
+
+  <div class="card" id="list"><div class="pad muted">Loading…</div></div>
+</div></main>
+
+<dialog id="dlg">
+  <form id="resolveForm">
+    <div class="dlg-head"><h3 id="dlgTitle">Resolve statement</h3><div class="sub" id="dlgSub"></div></div>
+    <div class="dlg-body" id="dlgBody"></div>
+    <div class="dlg-foot">
+      <button type="button" onclick="dlg.close()">Cancel</button>
+      <button type="button" id="viewBtn">View original</button>
+      <button class="primary" type="submit">Confirm &amp; post</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/common.js"></script>
+<script>
+const { api, money, fmtDate, escapeHtml } = BPP;
+const dlg = document.getElementById('dlg');
+let ROWS = [];
+
+(async function () {
+  await BPP.mountChrome('review');
+  document.getElementById('resolveForm').addEventListener('submit', resolve);
+  document.getElementById('helpBtn').addEventListener('click', () => {
+    const h = document.getElementById('help');
+    h.style.display = h.style.display === 'none' ? 'block' : 'none';
+  });
+  await load();
+})();
+
+async function load() {
+  ROWS = await api('/api/review-queue');
+  document.getElementById('list').innerHTML = ROWS.length ? `
+    <table class="grid"><thead><tr><th>Uploaded</th><th>Company / Bank</th><th>File</th><th>Statement date</th><th class="num">Extracted</th><th>Issue</th><th></th></tr></thead>
+    <tbody>${ROWS.map(r => `<tr>
+      <td>${fmtDate(r.uploaded_at)}<div class="acct">${escapeHtml(r.uploaded_by || '')}</div></td>
+      <td>${r.status === 'unrouted' ? '<b>Account not recognised</b>' + (r.detail && r.detail.source && r.detail.source.subject ? `<div class="acct">${escapeHtml(r.detail.source.subject)}</div>` : '') : escapeHtml(r.company_name) + `<div class="acct">${escapeHtml(r.bank_name)} · ${escapeHtml(r.account_number || r.account_title || '')}</div>`}</td>
+      <td>${escapeHtml(r.file_name)}</td>
+      <td>${fmtDate(r.latest_statement_date)}</td>
+      <td class="num">${money(r.extracted_balance)}</td>
+      <td><span class="pill ${r.status === 'unrouted' ? 'review' : r.status}">${r.status === 'error' ? 'Error' : r.status === 'unrouted' ? 'Pick account' : 'Review'}</span><div class="acct">${escapeHtml((r.warnings || [])[0] || r.error_message || '')}</div></td>
+      <td class="num"><button class="sm primary" onclick="openResolve(${r.id})">${r.status === 'unrouted' ? 'Assign' : 'Resolve'}</button></td>
+    </tr>`).join('')}</tbody></table>`
+    : '<div class="pad okbox">Nothing to review. 🎉</div>';
+}
+
+function conflictBlock(r) {
+  return `<div class="tag" style="margin-top:12px">Two statements disagree</div>
+    <table class="grid" style="margin-top:6px"><thead><tr><th>Date</th><th class="num">Already on file</th><th class="num">This file</th></tr></thead><tbody>${r.detail.conflicts.map((c) =>
+      `<tr><td>${fmtDate(c.date)}</td><td class="num">${money(c.existing)}</td><td class="num">${money(c.incoming)}</td></tr>`).join('')}</tbody></table>
+    <label class="fld" style="margin-top:10px"><span>What should the system do?</span>
+      <select name="conflict_action"><option value="keep_existing">Keep the balances already on file</option><option value="use_new">Use this file's balances instead</option></select></label>`;
+}
+
+function photoTable(r) {
+  const rows = r.detail.photoRows;
+  return `<div class="tag" style="margin-top:12px">Balances read from the photo — fix any date or amount, untick rows you don't want</div>
+    <table class="grid" id="ptab" style="margin-top:6px"><thead><tr><th></th><th>Date</th><th>Balance (PKR)</th><th>Check</th></tr></thead><tbody>${rows.map((x, i) => `<tr>
+      <td><input type="checkbox" checked style="width:auto" data-i="${i}"></td>
+      <td><input type="date" value="${escapeHtml(x.date || '')}" data-d="${i}" style="padding:5px"></td>
+      <td><input value="${escapeHtml(x.value)}" data-v="${i}" style="padding:5px;text-align:right"></td>
+      <td>${x.verified ? '<span class="pill done">verified</span>' : '<span class="pill review">unchecked</span>'}${x.date ? '' : ' <span class="muted">date?</span>'}</td></tr>`).join('')}</tbody></table>
+    <div class="muted" style="font-size:12px;margin-top:4px">"verified" = matches previous balance + credits − debits on the photo.</div>`;
+}
+
+let ACCOUNTS = null;
+async function openAssign(r) {
+  if (!ACCOUNTS) ACCOUNTS = await api('/api/ingest/accounts');
+  document.getElementById('dlgSub').textContent = r.file_name;
+  document.getElementById('viewBtn').onclick = () => window.open('/api/statements/' + r.id + '/file', '_blank');
+  dlg.dataset.id = r.id; dlg.dataset.mode = 'assign';
+  const src = (r.detail && r.detail.source) || {};
+  document.getElementById('dlgBody').innerHTML = `
+    <div class="warnbox">${escapeHtml((r.warnings || [])[0] || 'The account could not be recognised.')}</div>
+    <dl class="kv" style="margin-top:10px">
+      <dt>E-mail subject</dt><dd>${escapeHtml(src.subject || '—')}</dd>
+      <dt>From</dt><dd>${escapeHtml(src.from || '—')}</dd>
+      <dt>File</dt><dd>${escapeHtml(r.file_name)}</dd>
+      ${r.detail && r.detail.fileInfo && r.detail.fileInfo.accountNumber ? `<dt>Account no. in file</dt><dd>${escapeHtml(r.detail.fileInfo.accountNumber)}</dd>` : ''}
+    </dl>
+    <label class="fld" style="margin-top:12px"><span>Which account is this statement for?</span>
+      <select name="account_id">${ACCOUNTS.map((a) => `<option value="${a.id}" ${(r.detail && r.detail.candidates || []).includes(a.id) ? 'selected' : ''}>${escapeHtml(a.label)}</option>`).join('')}</select></label>
+    <label class="fld"><span>PDF password (only if the file is protected)</span><input name="password" type="password" autocomplete="off"></label>
+    <div class="muted" style="font-size:12px">The balance is read and posted straight away. The account number in the file is remembered, so the next one from this account is matched automatically.</div>`;
+  dlg.showModal();
+}
+
+function openResolve(id) {
+  const r = ROWS.find(x => x.id === id);
+  if (r.status === 'unrouted') { openAssign(r); return; }
+  dlg.dataset.mode = 'resolve';
+  document.getElementById('dlgSub').textContent = `${r.company_name} · ${r.bank_name}`;
+  document.getElementById('viewBtn').onclick = () => window.open('/api/statements/' + id + '/file', '_blank');
+  dlg.dataset.id = id;
+  document.getElementById('dlgBody').innerHTML = `
+    <dl class="kv">
+      <dt>File</dt><dd>${escapeHtml(r.file_name)}</dd>
+      <dt>Parser / method</dt><dd>${escapeHtml(r.parser || '—')} · ${escapeHtml(r.method || '—')}</dd>
+      <dt>Opening</dt><dd>${money(r.opening_balance)}</dd>
+      <dt>Reported closing</dt><dd>${money(r.closing_balance_reported)}</dd>
+      <dt>System extracted</dt><dd><strong>${money(r.extracted_balance)}</strong> · confidence ${(Math.round((r.confidence || 0) * 100))}%</dd>
+    </dl>
+    ${(r.warnings || []).length ? `<div class="warnbox"><ul style="margin:0 0 0 16px">${r.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>` : ''}
+    ${r.error_message ? `<div class="errbox">${escapeHtml(r.error_message)}</div>` : ''}
+    ${r.detail && r.detail.ocrText ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer">Text the OCR read from the image</summary>
+      <pre style="white-space:pre-wrap;font-size:11px;background:#f5f7fa;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:220px;overflow:auto">${escapeHtml(r.detail.ocrText)}</pre></details>` : ''}
+    ${r.detail && r.detail.conflicts ? conflictBlock(r) : ''}
+    ${r.detail && r.detail.photoRows ? photoTable(r) : ''}
+    <label class="fld" style="margin-top:14px;${(r.detail && (r.detail.photoRows || r.detail.conflicts)) ? 'display:none' : ''}"><span>Statement date (YYYY-MM-DD)</span><input name="statement_date" value="${escapeHtml(r.latest_statement_date || '')}" placeholder="required"></label>
+    <label class="fld"><span>Confirmed balance — leave blank to accept the extracted value</span><input name="corrected_balance" type="number" step="0.01" placeholder="${r.extracted_balance ?? ''}"></label>
+    <label class="fld"><span>Reason (required if you change the balance)</span><input name="reason" placeholder="e.g. read closing balance from PDF page 2"></label>`;
+  dlg.showModal();
+}
+
+async function resolve(e) {
+  e.preventDefault();
+  if (dlg.dataset.mode === 'assign') {
+    const f = new FormData(e.target);
+    try {
+      const r = await api(`/api/statements/${dlg.dataset.id}/assign`, { method: 'POST', body: JSON.stringify({ account_id: f.get('account_id'), password: f.get('password') || undefined }) });
+      if (r.needPassword) { alert(r.message); return; }
+      dlg.close(); load();
+      alert(r.result.status === 'processed' ? `Posted: ${r.result.company} · ${r.result.bank} — ${r.result.days_posted} day(s).` : 'Read, but it still needs a check — it is now in the queue under that account.');
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  const fd = new FormData(e.target), body = {};
+  fd.forEach((v, k) => body[k] = v);
+  const ptab = document.getElementById('ptab');
+  if (ptab) {
+    body.days = [...ptab.querySelectorAll('tbody tr')].filter((tr) => tr.querySelector('[data-i]').checked)
+      .map((tr) => ({ date: tr.querySelector('[data-d]').value, balance: String(tr.querySelector('[data-v]').value).replace(/,/g, '') }));
+    if (!body.days.length || body.days.some((d) => !d.date || d.balance === '')) { alert('Every ticked row needs a date and a balance.'); return; }
+    try {
+      const r = await api(`/api/review/${dlg.dataset.id}/resolve`, { method: 'POST', body: JSON.stringify(body) });
+      dlg.close(); load(); alert(`Posted ${r.days_posted} day balance(s).`);
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  if (body.corrected_balance && !body.reason) { alert('Please give a reason for the changed balance.'); return; }
+  try {
+    await api(`/api/review/${dlg.dataset.id}/resolve`, { method: 'POST', body: JSON.stringify(body) });
+    dlg.close(); load();
+  } catch (err) { alert(err.message); }
+}
+window.openResolve = openResolve;
+</script>
+</body>
+</html>

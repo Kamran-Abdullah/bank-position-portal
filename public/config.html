@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead"><div><h1>Setup</h1><div class="sub">Companies, banks and bank accounts. The same bank can belong to several companies — a position is always tied to a specific account.</div></div></div>
+
+  <div class="toolbar">
+    <button data-tab="accounts" class="tabBtn primary">Bank Accounts</button>
+    <button data-tab="companies" class="tabBtn">Companies</button>
+    <button data-tab="banks" class="tabBtn">Banks</button>
+    <div class="spacer"></div>
+    <button class="primary" id="addBtn">+ Add</button>
+  </div>
+
+  <div class="card" id="tableCard"><div class="pad muted">Loading…</div></div>
+</div></main>
+
+<dialog id="dlg">
+  <form id="dlgForm">
+    <div class="dlg-head"><h3 id="dlgTitle"></h3></div>
+    <div class="dlg-body" id="dlgBody"></div>
+    <div class="dlg-foot"><button type="button" onclick="dlg.close()">Cancel</button><button class="primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+
+<script src="/common.js"></script>
+<script>
+const { api, escapeHtml, money } = BPP;
+const dlg = document.getElementById('dlg');
+let TAB = 'accounts', COMPANIES = [], BANKS = [], ACCOUNTS = [];
+
+(async function () {
+  const me = await BPP.mountChrome('config');
+  if (me.user.role !== 'super_user') { document.querySelector('.wrap').innerHTML = '<div class="card pad">Setup is restricted to Super Users.</div>'; return; }
+  document.querySelectorAll('.tabBtn').forEach(b => b.addEventListener('click', () => { TAB = b.dataset.tab; document.querySelectorAll('.tabBtn').forEach(x => x.classList.toggle('primary', x === b)); refresh(); }));
+  document.getElementById('addBtn').addEventListener('click', () => openForm(null));
+  document.getElementById('dlgForm').addEventListener('submit', save);
+  await refresh();
+})();
+
+async function refresh() {
+  [COMPANIES, BANKS, ACCOUNTS] = await Promise.all([api('/api/companies'), api('/api/banks'), api('/api/accounts')]);
+  const card = document.getElementById('tableCard');
+  if (TAB === 'companies') {
+    card.innerHTML = table(['Name', 'Code', 'Short names', 'Status', 'Order', ''], COMPANIES.map(c => [
+      escapeHtml(c.name), escapeHtml(c.code || ''), escapeHtml(c.aliases || ''), c.status, c.display_order, rowbtns('companies', c.id)]));
+  } else if (TAB === 'banks') {
+    card.innerHTML = table(['Name', 'Code', 'Parser', 'Status', 'Order', ''], BANKS.map(b => [
+      escapeHtml(b.name), escapeHtml(b.code || ''), escapeHtml(b.parser_key || 'generic'), b.status, b.display_order, rowbtns('banks', b.id)]));
+  } else {
+    card.innerHTML = table(['Company', 'Bank', 'Account #', 'Title', 'Cur', 'Pwd', 'Status', ''], ACCOUNTS.map(a => [
+      escapeHtml(a.company_name), escapeHtml(a.bank_name), escapeHtml(a.account_number || '—'),
+      escapeHtml(a.account_title || ''), a.currency, a.has_password ? '🔒' : '', a.status, rowbtns('accounts', a.id)]));
+  }
+}
+function table(head, rows) {
+  return `<table class="grid"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map((c, i) => `<td${i === r.length - 1 ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${head.length}" class="muted">None yet.</td></tr>`}</tbody></table>`;
+}
+function rowbtns(kind, id) {
+  return `<span class="rowbtns">${kind === 'accounts' ? `<button class="sm" title="Add lien / adjustment lines under this bank" onclick="adjust(${id})">Liens</button>` : ''}<button class="sm" onclick="openForm('${kind}:${id}')">Edit</button><button class="sm" onclick="del('${kind}',${id})">Delete</button></span>`;
+}
+
+function openForm(key) {
+  let kind = TAB, item = null;
+  if (key) { const [k, id] = key.split(':'); kind = k; item = ({ companies: COMPANIES, banks: BANKS, accounts: ACCOUNTS }[k]).find(x => x.id == id); }
+  document.getElementById('dlgTitle').textContent = (item ? 'Edit ' : 'Add ') + kind.replace(/s$/, '');
+  const b = document.getElementById('dlgBody');
+  dlg.dataset.kind = kind; dlg.dataset.id = item ? item.id : '';
+  if (kind === 'companies') {
+    b.innerHTML = fld('name', 'Company name', item?.name) + fld('code', 'Company code', item?.code) + fld('aliases', 'Short names used in e-mail subjects / file names (comma separated)', item?.aliases)
+      + sel('status', 'Status', ['active', 'inactive'], item?.status) + fld('display_order', 'Display order', item?.display_order ?? 0, 'number');
+  } else if (kind === 'banks') {
+    b.innerHTML = fld('name', 'Bank name', item?.name) + fld('code', 'Bank code', item?.code)
+      + sel('parser_key', 'Statement parser', ['', 'hmb', 'bahl', 'askari', 'meezan'], item?.parser_key, ['Generic (auto-detect)', 'Habib Metropolitan (HTML .xls)', 'Bank Al Habib (PDF)', 'Askari NexCash (.xlsx)', 'Meezan (.xlsx)'])
+      + sel('status', 'Status', ['active', 'inactive'], item?.status) + fld('display_order', 'Display order', item?.display_order ?? 0, 'number');
+  } else {
+    b.innerHTML = `<div class="formgrid">
+      ${sel('company_id', 'Company', COMPANIES.map(c => c.id), item?.company_id, COMPANIES.map(c => c.name))}
+      ${sel('bank_id', 'Bank', BANKS.map(bk => bk.id), item?.bank_id, BANKS.map(bk => bk.name))}
+      ${fld('account_number', 'Account number', item?.account_number)}
+      ${fld('account_title', 'Account title', item?.account_title)}
+      ${fld('currency', 'Currency', item?.currency || 'PKR')}
+      ${fld('branch', 'Branch', item?.branch)}
+      ${sel('status', 'Status', ['active', 'inactive'], item?.status)}
+      ${fld('display_order', 'Display order', item?.display_order ?? 0, 'number')}
+    </div>
+    ${fld('statement_password', 'Saved PDF password (optional)', '', 'password')}
+    <div class="muted" style="font-size:12px">${item?.has_password ? 'A password is stored. Leave blank to keep it, or type a new one. Clear the field and save is treated as "keep".' : 'Stored encrypted at rest; used automatically for password-protected PDFs.'}</div>`;
+  }
+  dlg.showModal();
+}
+const fld = (n, label, v, type = 'text') => `<label class="fld"><span>${label}</span><input name="${n}" type="${type}" value="${v == null ? '' : escapeHtml(v)}"></label>`;
+const sel = (n, label, vals, cur, labels) => `<label class="fld"><span>${label}</span><select name="${n}">${vals.map((v, i) => `<option value="${escapeHtml(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${escapeHtml((labels ? labels[i] : v) || '(none)')}</option>`).join('')}</select></label>`;
+
+async function save(e) {
+  e.preventDefault();
+  const kind = dlg.dataset.kind, id = dlg.dataset.id;
+  const fd = new FormData(e.target); const body = {};
+  fd.forEach((v, k) => { body[k] = v === '' ? null : v; });
+  ['display_order', 'company_id', 'bank_id'].forEach(k => { if (body[k] != null) body[k] = Number(body[k]); });
+  if (kind === 'accounts' && id && (body.statement_password == null)) delete body.statement_password;
+  try {
+    await api(`/api/${kind}${id ? '/' + id : ''}`, { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+    dlg.close(); refresh();
+  } catch (err) { alert(err.message); }
+}
+async function del(kind, id) {
+  if (!confirm('Delete this ' + kind.replace(/s$/, '') + '?')) return;
+  try { await api(`/api/${kind}/${id}`, { method: 'DELETE' }); refresh(); }
+  catch (e) { alert(e.message); }
+}
+window.openForm = openForm; window.del = del;
+window.adjust = (id) => { const a = ACCOUNTS.find((x) => x.id === id); BPP.adjustmentsDialog({ accountId: id, title: `${a.company_name} · ${a.bank_name}`, onChanged: refresh }); };
+</script>
+</body>
+</html>

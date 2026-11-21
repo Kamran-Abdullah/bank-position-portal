@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Settings · Bank Position Portal</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main><div class="wrap">
+  <div class="pagehead"><div><h1>Settings</h1><div class="sub">Super User only</div></div></div>
+  <div id="root"><div class="card pad muted">Loading…</div></div>
+</div></main>
+<script src="/common.js"></script>
+<script>
+const { api, escapeHtml, fmtDate } = BPP;
+const WD = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+(async function () {
+  const me = await BPP.mountChrome('settings');
+  if (me.user.role !== 'super_user') { document.getElementById('root').innerHTML = '<div class="card pad">Restricted to Super Users.</div>'; return; }
+  render().then(() => { loadNotifyState(); renderFunds().then(renderLayout); });
+})();
+
+async function render() {
+  const [s, users, perms] = await Promise.all([api('/api/settings'), api('/api/users'), api('/api/access-permissions')]);
+  const offset = {}; (s.off_days || []).forEach(d => offset[d.weekday] = d.active);
+  document.getElementById('root').innerHTML = `
+  <div class="card pad">
+    <h3>General</h3>
+    <div class="formgrid">
+      <label class="fld"><span>Group name</span><input id="group_name" value="${escapeHtml(s.group_name || '')}"></label>
+      <label class="fld"><span>Confidence threshold (0–1) for auto-post</span><input id="confidence_threshold" type="number" step="0.01" min="0" max="1" value="${escapeHtml(s.confidence_threshold || '0.75')}"></label>
+      <label class="fld"><span>Carry forward on off-days / missing days</span>
+        <select id="carry_forward_offdays"><option value="true" ${s.carry_forward_offdays !== 'false' ? 'selected' : ''}>Yes</option><option value="false" ${s.carry_forward_offdays === 'false' ? 'selected' : ''}>No</option></select></label>
+    </div>
+    <button class="primary" onclick="saveGeneral()">Save general settings</button>
+  </div>
+
+  <div class="card pad">
+    <h3>Off-days</h3>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 12px">
+      ${WD.map((w, i) => `<label style="display:flex;gap:6px;align-items:center;width:auto"><input type="checkbox" style="width:auto" class="offday" data-wd="${i}" ${offset[i] ? 'checked' : ''}> ${w}</label>`).join('')}
+    </div>
+    <button class="primary" onclick="saveOffDays()">Save off-days</button>
+    <h3 style="margin-top:18px">Custom holidays</h3>
+    <table class="grid"><tbody id="hols">${(s.holidays || []).map(h => `<tr><td>${fmtDate(h.holiday_date)}</td><td>${escapeHtml(h.name || '')}</td><td class="num"><button class="sm" onclick="delHol('${h.holiday_date}')">Remove</button></td></tr>`).join('') || '<tr><td class="muted">None</td></tr>'}</tbody></table>
+    <div class="toolbar" style="margin-top:10px"><input type="date" id="hd" style="width:170px"><input id="hn" placeholder="Holiday name"><button class="sm primary" onclick="addHol()">Add holiday</button></div>
+  </div>
+
+  <div class="card pad" id="notifyCard">
+    <h3>E-mail notification &mdash; "all statements received"</h3>
+    <p class="muted" style="margin-top:-4px">When every active bank account has a statement for today, one summary e-mail is prepared automatically (once per day). The Outlook agent creates it as a <b>draft</b> (you press Send) or sends it directly, as you choose below. The message lists the bank balances (full amount and in millions), any liens and net figures and the available-funds statement, and attaches the PDFs ticked below.</p>
+    <div class="formgrid">
+      <label class="fld"><span>Automatic notification</span>
+        <select id="notify_enabled"><option value="false" ${s.notify_enabled !== 'true' ? 'selected' : ''}>Off</option><option value="true" ${s.notify_enabled === 'true' ? 'selected' : ''}>On</option></select></label>
+      <label class="fld"><span>When ready</span>
+        <select id="notify_mode"><option value="draft" ${s.notify_mode !== 'send' ? 'selected' : ''}>Save as a draft in Outlook (I press Send)</option><option value="send" ${s.notify_mode === 'send' ? 'selected' : ''}>Send automatically</option></select></label>
+      <label class="fld"><span>To (separate with ;)</span><input id="notify_to" value="${escapeHtml(s.notify_to || '')}" placeholder="name@company.com; name2@company.com"></label>
+      <label class="fld"><span>Cc</span><input id="notify_cc" value="${escapeHtml(s.notify_cc || '')}"></label>
+      <label class="fld"><span>Subject ({date} = the bank-position date)</span><input id="notify_subject" value="${escapeHtml(s.notify_subject || 'Bank Position - {date}')}"></label>
+      <label class="fld"><span>Do not send before (24h time)</span><input id="notify_not_before" type="time" value="${escapeHtml(s.notify_not_before || '00:00')}"></label>
+      <div class="fld" style="grid-column:1/-1"><span>PDF attachments</span>
+        <label style="margin-right:18px;font-weight:500"><input type="checkbox" style="width:auto;display:inline-block;vertical-align:middle;margin:0 6px 0 0;padding:0" id="notify_attach_daily" ${s.notify_attach_daily !== 'false' ? 'checked' : ''}> Daily Bank Position</label>
+        <label style="margin-right:18px;font-weight:500"><input type="checkbox" style="width:auto;display:inline-block;vertical-align:middle;margin:0 6px 0 0;padding:0" id="notify_attach_monthly" ${s.notify_attach_monthly !== 'false' ? 'checked' : ''}> Monthly Bank Position</label>
+        <label style="font-weight:500"><input type="checkbox" style="width:auto;display:inline-block;vertical-align:middle;margin:0 6px 0 0;padding:0" id="notify_attach_unpresented" ${s.notify_attach_unpresented !== 'false' ? 'checked' : ''}> Unpresented Cheques</label></div>
+    </div>
+    <div class="toolbar"><button class="primary" onclick="saveNotify()">Save</button><button onclick="previewNotify()">Preview message</button><button onclick="queueNotify()">Prepare it now</button><span class="muted" id="notifyState"></span></div>
+    <div id="notifyPreview"></div>
+  </div>
+
+  <div class="card pad" id="funds">
+    <h3>Funds &amp; reserves &mdash; group balance pools</h3>
+    <p class="muted" style="margin-top:-4px">Choose which bank accounts count towards a group balance (a <b>pool</b>). Finance users then enter the reserves held against it (liens, returnable amounts, unpresented cheques&hellip;) on the <a href="/funds.html">Available Funds</a> page, which shows <b>balance &minus; reserves = available to use</b>.</p>
+    <div id="fundsHost"><div class="muted">Loading&hellip;</div></div>
+  </div>
+
+  <div class="card pad" id="layout">
+    <h3>Funds statement &mdash; lines &amp; equations</h3>
+    <p class="muted" style="margin-top:-4px">Every line has a permanent code (A, B, C&hellip;). Write your own calculation lines using those codes &mdash; for example <code>A - RESERVES(A)</code> for funds available, or <code>A + K</code> for the overall balance. Order is up to you; codes never change.</p>
+    <div id="layoutHost"><div class="muted">Loading&hellip;</div></div>
+    <div class="card pad" style="margin-top:12px;border-style:dashed">
+      <b>Add a calculation line</b>
+      <div class="formgrid" style="margin-top:8px">
+        <label class="fld"><span>Name</span><input id="lnLabel" placeholder="e.g. Overall balance"></label>
+        <label class="fld"><span>Equation</span><input id="lnFormula" placeholder="e.g. A + K" autocomplete="off"></label>
+      </div>
+      <div id="lnChips" class="muted" style="margin:-4px 0 8px"></div>
+      <div class="toolbar"><label style="display:flex;gap:6px;align-items:center;width:auto"><input type="checkbox" id="lnHead" style="width:auto"> show as a headline figure</label><div class="spacer"></div><span id="lnCheck" class="muted"></span><button class="primary sm" onclick="addLine()">+ Add line</button></div>
+      <div class="muted" style="font-size:12px;margin-top:6px"><b>Functions:</b> <code>RESERVES(A)</code> all reserves of the pool in line A &middot; <code>RESERVES()</code> every reserve &middot; <code>BALANCES()</code> all pool balances &middot; <code>LIENS(A)</code> liens entered under the banks of pool A &middot; <code>SUM(B:F)</code> lines B to F (by position) &middot; <code>MIN(x,y)</code> <code>MAX(x,y)</code> <code>ABS(x)</code> &middot; use + &minus; &times; &divide; and ( ). Reserves added later are picked up automatically by <code>RESERVES()</code>.</div>
+    </div>
+  </div>
+
+  <div class="card pad">
+    <h3>Users</h3>
+    <table class="grid"><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Locked</th><th></th></tr></thead>
+    <tbody>${users.map(u => `<tr><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.full_name || '')}</td><td>${u.role}</td><td>${u.locked_until ? 'yes' : ''}</td>
+      <td class="num"><button class="sm" onclick="pw(${u.id})">Reset password</button> <button class="sm" onclick="delUser(${u.id})">Delete</button></td></tr>`).join('')}</tbody></table>
+    <div class="toolbar" style="margin-top:10px">
+      <input id="nu" placeholder="username"><input id="nn" placeholder="full name">
+      <input id="np" type="password" placeholder="password">
+      <select id="nr"><option value="finance_user">Finance User</option><option value="viewer">Viewer</option><option value="super_user">Super User</option></select>
+      <button class="sm primary" onclick="addUser()">Add user</button>
+    </div>
+  </div>
+
+  <div class="card pad">
+    <h3>Role permissions</h3>
+    ${permTable(perms)}
+  </div>`;
+}
+
+function permTable(perms) {
+  const sections = [...new Set(perms.map(p => p.section))];
+  const roles = ['finance_user', 'viewer'];
+  const at = (r, s) => perms.find(p => p.role === r && p.section === s);
+  return `<table class="grid"><thead><tr><th>Section</th>${roles.map(r => `<th>${r}</th>`).join('')}</tr></thead>
+  <tbody>${sections.map(s => `<tr><td>${s}</td>${roles.map(r => {
+    const p = at(r, s);
+    return `<td><input type="checkbox" style="width:auto" ${p && p.allowed ? 'checked' : ''} onchange="setPerm('${r}','${s}',this.checked)"></td>`;
+  }).join('')}</tr>`).join('')}</tbody></table><p class="muted">Super User always has full access.</p>`;
+}
+
+
+// ---------------- funds pools ----------------
+async function renderFunds() {
+  const host = document.getElementById('fundsHost'); if (!host) return;
+  const [pools, accounts] = await Promise.all([api('/api/funds/pools'), api('/api/accounts')]);
+  const byCo = {};
+  accounts.filter((a) => a.status === 'active').forEach((a) => { (byCo[a.company_name] = byCo[a.company_name] || []).push(a); });
+  const accHtml = (sel) => Object.entries(byCo).map(([co, list]) => `<div style="margin:6px 0"><div class="tag">${escapeHtml(co)}</div>${list.map((a) =>
+    `<label style="display:inline-flex;gap:6px;align-items:center;margin:3px 14px 3px 0;width:auto"><input type="checkbox" style="width:auto" value="${a.id}" ${sel.includes(a.id) ? 'checked' : ''}> ${escapeHtml(a.bank_name)}</label>`).join('')}</div>`).join('');
+  host.innerHTML = pools.map((p) => `<div class="card pad" style="margin-top:12px;background:#fafbfd" data-pool="${p.id}">
+      <div class="toolbar" style="margin-bottom:4px"><input class="pname" value="${escapeHtml(p.name)}" style="max-width:340px;font-weight:600"><div class="spacer"></div>
+        <button class="sm primary" onclick="savePool(${p.id})">Save pool</button><button class="sm" onclick="delPool(${p.id})">Delete pool</button></div>
+      ${accHtml(p.account_ids)}</div>`).join('') +
+    `<div class="card pad" style="margin-top:12px;border-style:dashed" id="newPool"><div class="toolbar" style="margin-bottom:4px"><input id="npName" placeholder="New pool name, e.g. Demo Group" style="max-width:340px"><div class="spacer"></div><button class="sm primary" onclick="addPool()">+ Create pool</button></div>${accHtml([])}</div>`;
+}
+const checked = (root) => [...root.querySelectorAll('input[type=checkbox]:checked')].map((c) => Number(c.value));
+async function savePool(id) {
+  const root = document.querySelector(`[data-pool="${id}"]`);
+  await api('/api/funds/pools/' + id, { method: 'PUT', body: JSON.stringify({ name: root.querySelector('.pname').value, account_ids: checked(root) }) });
+  alert('Saved.'); renderLayout();
+}
+async function delPool(id) { if (confirm('Delete this pool and its reserve heads? (History is kept in the audit log.)')) { await api('/api/funds/pools/' + id, { method: 'DELETE' }); renderFunds().then(renderLayout); } }
+async function addPool() {
+  const root = document.getElementById('newPool'), name = document.getElementById('npName').value.trim();
+  if (!name) { alert('Give the pool a name.'); return; }
+  if (!checked(root).length && !confirm('No bank accounts ticked. Create an empty pool?')) return;
+  await api('/api/funds/pools', { method: 'POST', body: JSON.stringify({ name, account_ids: checked(root) }) });
+  renderFunds().then(renderLayout);
+}
+
+// ---------------- statement layout / equations ----------------
+let LAYOUT = null;
+async function renderLayout() {
+  const host = document.getElementById('layoutHost'); if (!host) return;
+  LAYOUT = await api('/api/funds?date=' + new Date().toISOString().slice(0, 10));
+  const kind = { pool: 'Bank balance', head: 'Reserve', formula: 'Calculation' };
+  host.innerHTML = LAYOUT.lines.length ? `<table class="grid"><thead><tr><th>Code</th><th>Line</th><th>Type</th><th>Equation</th><th>Headline</th><th></th></tr></thead><tbody>${LAYOUT.lines.map((l, i) => `<tr>
+    <td><b>${l.code}</b></td><td>${escapeHtml(l.label)}</td><td>${kind[l.kind]}</td>
+    <td>${l.kind === 'formula' ? `<code>${escapeHtml(l.formula || '')}</code>${l.error ? `<div class="muted" style="color:var(--red-ink)">⚠ ${escapeHtml(l.error)}</div>` : ''}` : '<span class="muted">—</span>'}</td>
+    <td><input type="checkbox" style="width:auto" ${l.headline ? 'checked' : ''} onchange="setHeadline(${l.id}, this.checked)" ${l.kind === 'formula' ? '' : 'disabled'}></td>
+    <td class="num"><span class="rowbtns"><button class="sm" ${i === 0 ? 'disabled' : ''} onclick="moveLine(${l.id},'up')">↑</button><button class="sm" ${i === LAYOUT.lines.length - 1 ? 'disabled' : ''} onclick="moveLine(${l.id},'down')">↓</button>
+      ${l.kind === 'formula' ? `<button class="sm" onclick="editLine(${l.id})">Edit</button><button class="sm" onclick="delLine(${l.id})">Delete</button>` : ''}</span></td></tr>`).join('')}</tbody></table>`
+    : '<div class="muted">No lines yet — create a pool above and its lines appear here.</div>';
+  const chips = LAYOUT.lines.map((l) => `<a href="#" onclick="ins('${l.code}');return false" title="${escapeHtml(l.label)}" style="margin-right:8px"><b>${l.code}</b> ${escapeHtml(l.label.replace(/^Balance in /, ''))}</a>`).join('');
+  const c = document.getElementById('lnChips'); if (c) c.innerHTML = 'Click to insert: ' + chips;
+}
+function ins(code) { const f = document.getElementById('lnFormula'); f.value = (f.value + ' ' + code).trim() + ' '; f.focus(); checkFormula(); }
+let _ck; async function checkFormula() {
+  clearTimeout(_ck); _ck = setTimeout(async () => {
+    const f = document.getElementById('lnFormula'); if (!f) return;
+    if (!f.value.trim()) { document.getElementById('lnCheck').textContent = ''; return; }
+    const r = await api('/api/funds/formula/check', { method: 'POST', body: JSON.stringify({ formula: f.value }) });
+    document.getElementById('lnCheck').innerHTML = r.ok ? `<span style="color:var(--green-ink)">✓ today = ${Number(r.value).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>` : `<span style="color:var(--red-ink)">✕ ${escapeHtml(r.error)}</span>`;
+  }, 350);
+}
+document.addEventListener('input', (e) => { if (e.target && e.target.id === 'lnFormula') checkFormula(); });
+async function addLine() {
+  try {
+    await api('/api/funds/lines', { method: 'POST', body: JSON.stringify({ label: lnLabel.value, formula: lnFormula.value, headline: lnHead.checked }) });
+    lnLabel.value = ''; lnFormula.value = ''; lnHead.checked = false; document.getElementById('lnCheck').textContent = ''; renderLayout();
+  } catch (e) { alert(e.message); }
+}
+async function editLine(id) {
+  const l = LAYOUT.lines.find((x) => x.id === id);
+  const label = prompt('Line name:', l.label); if (label === null) return;
+  const formula = prompt(`Equation for ${l.code}:`, l.formula); if (formula === null) return;
+  try { await api('/api/funds/lines/' + id, { method: 'PUT', body: JSON.stringify({ label, formula }) }); renderLayout(); } catch (e) { alert(e.message); }
+}
+async function delLine(id) { if (confirm('Delete this calculation line? Other equations that use its code will show an error until fixed.')) { await api('/api/funds/lines/' + id, { method: 'DELETE' }); renderLayout(); } }
+async function moveLine(id, dir) { await api(`/api/funds/lines/${id}/move`, { method: 'POST', body: JSON.stringify({ dir }) }); renderLayout(); }
+async function setHeadline(id, on) { await api('/api/funds/lines/' + id, { method: 'PUT', body: JSON.stringify({ headline: on }) }); }
+
+async function saveNotify() {
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({
+    notify_enabled: notify_enabled.value, notify_mode: notify_mode.value, notify_to: notify_to.value, notify_cc: notify_cc.value,
+    notify_subject: notify_subject.value, notify_not_before: notify_not_before.value,
+    notify_attach_daily: String(notify_attach_daily.checked), notify_attach_monthly: String(notify_attach_monthly.checked), notify_attach_unpresented: String(notify_attach_unpresented.checked) }) });
+  loadNotifyState(); alert('Saved.');
+}
+async function loadNotifyState() {
+  try {
+    const n = await api('/api/notify/status');
+    const el = document.getElementById('notifyState'); if (!el) return;
+    el.innerHTML = `For ${n.date}: ${n.complete ? '✓ all ' + n.total + ' accounts are in' : n.missing.length + ' of ' + n.total + ' account(s) still missing'}${n.alreadySent ? ' · already prepared today' : ''}${n.waitingInOutbox ? ' · ' + n.waitingInOutbox + ' waiting for the Outlook agent' : ''}`;
+  } catch {}
+}
+async function previewNotify() {
+  const p = await api('/api/notify/preview');
+  document.getElementById('notifyPreview').innerHTML = `<div class="muted" style="margin:10px 0 4px">Subject: <b>${escapeHtml(p.subject)}</b>${p.complete ? '' : ' &mdash; not complete yet: ' + p.missing.map((m) => escapeHtml(m.company + ' / ' + m.bank)).join(', ')}</div><div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:#fff">${p.html}</div>`;
+}
+async function queueNotify() {
+  const n = await api('/api/notify/status');
+  let force = false;
+  if (!n.complete) { if (!confirm(`${n.missing.length} account(s) are still missing for ${n.date}. Prepare the message anyway?`)) return; force = true; }
+  const r = await api('/api/notify/queue', { method: 'POST', body: JSON.stringify({ force }) });
+  alert(r.queued ? (r.agentStarted ? 'Prepared. The Outlook agent has been started and is now ' + (n.mode === 'send' ? 'sending' : 'saving as a draft') + ' the e-mail - allow about a minute (check Sent Items).' : 'Prepared. The Outlook agent will send it on its next run (8 AM - 11 AM).') : r.why);
+  loadNotifyState();
+}
+async function saveGeneral() {
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({
+    group_name: group_name.value, confidence_threshold: confidence_threshold.value, carry_forward_offdays: carry_forward_offdays.value }) });
+  alert('Saved.');
+}
+async function saveOffDays() {
+  const off_days = [...document.querySelectorAll('.offday')].map(c => ({ weekday: Number(c.dataset.wd), active: c.checked }));
+  await api('/api/off-days', { method: 'PUT', body: JSON.stringify({ off_days }) });
+  alert('Saved.');
+}
+async function addHol() { if (!hd.value) return; await api('/api/holidays', { method: 'POST', body: JSON.stringify({ holiday_date: hd.value, name: hn.value }) }); render(); }
+async function delHol(d) { await api('/api/holidays/' + d, { method: 'DELETE' }); render(); }
+async function addUser() {
+  try { await api('/api/users', { method: 'POST', body: JSON.stringify({ username: nu.value, full_name: nn.value, password: np.value, role: nr.value }) }); render(); }
+  catch (e) { alert(e.message); }
+}
+async function pw(id) { const p = prompt('New password:'); if (p) { await api('/api/users/' + id + '/password', { method: 'PUT', body: JSON.stringify({ password: p }) }); alert('Done.'); } }
+async function delUser(id) { if (confirm('Delete user?')) { try { await api('/api/users/' + id, { method: 'DELETE' }); render(); } catch (e) { alert(e.message); } } }
+async function setPerm(role, section, allowed) { await api('/api/access-permissions', { method: 'POST', body: JSON.stringify({ role, section, allowed }) }); }
+Object.assign(window, { ins, addLine, editLine, delLine, moveLine, setHeadline, savePool, delPool, addPool, saveNotify, previewNotify, queueNotify, saveGeneral, saveOffDays, addHol, delHol, addUser, pw, delUser, setPerm });
+</script>
+</body>
+</html>

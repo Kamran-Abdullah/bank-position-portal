@@ -1,0 +1,28 @@
+{
+  "name": "bank-position-portal",
+  "version": "0.1.0",
+  "description": "Automated Daily Bank Position Portal: reads bank statements and builds a daily cash position per company and bank",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "powershell -ExecutionPolicy Bypass -File build-exe.ps1"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cheerio": "^1.0.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "jimp": "^0.22.12",
+    "multer": "^2.3.0",
+    "pdfjs-dist": "^4.10.38",
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "postject": "^1.0.0-alpha.6"
+  }
+}

@@ -8,6 +8,10 @@ Offline Node/Express + `node:sqlite`, plain HTML front-end. No internet required
 
 ![Daily bank position dashboard](docs/screenshots/dashboard.jpg)
 
+![Daily report by company and bank](docs/screenshots/daily-report.jpg)
+
+![Setup: companies, banks and bank accounts](docs/screenshots/setup.jpg)
+
 *The screenshot uses made-up demo data: invented companies and generated balances. All company names, account numbers and example keyword rules in this repository are placeholders. Replace them in **Setup** with your own.*
 
 ## Run (development)

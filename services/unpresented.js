@@ -14,7 +14,7 @@ const ExcelJS = require('exceljs');
 const { db, getSetting, setSetting, logAudit, decryptSecret, STORAGE_DIR } = require('../db');
 
 const SECTION_DEFAULT = { 'habib metro': 1, 'northwind health hmb': 6, 'bank al habib': 2, 'contoso aesthetic': 10, 'askari bank': 3 };
-const LABEL_DEFAULT = { health: 6, 'acme pvt ltd': 1 };
+const LABEL_DEFAULT = { health: 6, 'abcd pharma pvt ltd': 1 };
 
 const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const num = (v) => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : NaN; };
